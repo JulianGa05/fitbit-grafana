@@ -546,6 +546,12 @@ def Get_New_Access_Token(client_id, client_secret):
 
 ACCESS_TOKEN = Get_New_Access_Token(client_id, client_secret)
 
+def Refresh_Global_Access_Token():
+    """Refresh tokens and update the in-memory access token used by scheduled requests."""
+    global ACCESS_TOKEN
+    ACCESS_TOKEN = Get_New_Access_Token(client_id, client_secret)
+    return ACCESS_TOKEN
+
 # %% [markdown]
 # ## Influxdb Database Initialization
 
@@ -1833,7 +1839,8 @@ if AUTO_DATE_RANGE:
     get_daily_data_limit_100d(start_date_str, end_date_str) # 1 query
     get_daily_data_limit_365d(start_date_str, end_date_str) # 8 queries
     get_daily_data_limit_none(start_date_str, end_date_str) # 1 query
-    get_battery_level() # 1 query
+    if HEALTH_API_PROVIDER != "google":
+        get_battery_level() # Fitbit-only; Google Health has no equivalent device battery endpoint
     fetch_latest_activities(end_date_str) # 1 query
     write_points_to_influxdb(collected_records)
     collected_records = []
@@ -1884,15 +1891,25 @@ else:
 # Ongoing continuous update of data
 if SCHEDULE_AUTO_UPDATE:
     
-    schedule.every(1).hours.do(lambda : Get_New_Access_Token(client_id,client_secret)) # Auto-refresh tokens every 1 hour
-    schedule.every(3).minutes.do( lambda : get_intraday_data_limit_1d(end_date_str, [('heart','HeartRate_Intraday','1sec'),('steps','Steps_Intraday','1min')] )) # Auto-refresh detailed HR and steps
-    schedule.every(1).hours.do( lambda : get_intraday_data_limit_1d((datetime.strptime(end_date_str, "%Y-%m-%d") - timedelta(days=1)).strftime("%Y-%m-%d"), [('heart','HeartRate_Intraday','1sec'),('steps','Steps_Intraday','1min')] )) # Refilling any missing data on previous day end of night due to fitbit sync delay ( see issue #10 )
-    schedule.every(20).minutes.do(get_battery_level) # Auto-refresh battery level
-    schedule.every(3).hours.do(lambda : get_daily_data_limit_30d(start_date_str, end_date_str))
-    schedule.every(4).hours.do(lambda : get_daily_data_limit_100d(start_date_str, end_date_str))
-    schedule.every(6).hours.do( lambda : get_daily_data_limit_365d(start_date_str, end_date_str))
-    schedule.every(6).hours.do(lambda : get_daily_data_limit_none(start_date_str, end_date_str))
-    schedule.every(1).hours.do( lambda : fetch_latest_activities(end_date_str))
+    schedule.every(1).hours.do(Refresh_Global_Access_Token) # Auto-refresh tokens and update in-memory access token
+    if HEALTH_API_PROVIDER == "google":
+        # Google/Fitbit app sync is normally not faster than ~15 minutes; avoid legacy 3-minute churn.
+        schedule.every(15).minutes.do(lambda : get_intraday_data_limit_1d(end_date_str, [('heart','HeartRate_Intraday','1sec'),('steps','Steps_Intraday','1min')]))
+        schedule.every(1).hours.do(lambda : get_intraday_data_limit_1d((datetime.strptime(end_date_str, "%Y-%m-%d") - timedelta(days=1)).strftime("%Y-%m-%d"), [('heart','HeartRate_Intraday','1sec'),('steps','Steps_Intraday','1min')]))
+        schedule.every(3).hours.do(lambda : get_daily_data_limit_30d(start_date_str, end_date_str))
+        schedule.every(4).hours.do(lambda : get_daily_data_limit_100d(start_date_str, end_date_str))
+        schedule.every(6).hours.do(lambda : get_daily_data_limit_365d(start_date_str, end_date_str))
+        schedule.every(6).hours.do(lambda : get_daily_data_limit_none(start_date_str, end_date_str))
+        schedule.every(1).hours.do(lambda : fetch_latest_activities(end_date_str))
+    else:
+        schedule.every(3).minutes.do(lambda : get_intraday_data_limit_1d(end_date_str, [('heart','HeartRate_Intraday','1sec'),('steps','Steps_Intraday','1min')])) # Auto-refresh detailed HR and steps
+        schedule.every(1).hours.do(lambda : get_intraday_data_limit_1d((datetime.strptime(end_date_str, "%Y-%m-%d") - timedelta(days=1)).strftime("%Y-%m-%d"), [('heart','HeartRate_Intraday','1sec'),('steps','Steps_Intraday','1min')])) # Refilling previous day due to sync delay
+        schedule.every(20).minutes.do(get_battery_level) # Fitbit-only battery level
+        schedule.every(3).hours.do(lambda : get_daily_data_limit_30d(start_date_str, end_date_str))
+        schedule.every(4).hours.do(lambda : get_daily_data_limit_100d(start_date_str, end_date_str))
+        schedule.every(6).hours.do(lambda : get_daily_data_limit_365d(start_date_str, end_date_str))
+        schedule.every(6).hours.do(lambda : get_daily_data_limit_none(start_date_str, end_date_str))
+        schedule.every(1).hours.do(lambda : fetch_latest_activities(end_date_str))
 
     while True:
         schedule.run_pending()
