@@ -19,6 +19,13 @@ Upstream `main` documents a broad Fitbit/Grafana dashboard, but in `HEALTH_API_P
 - Scheduled token refresh now updates the global in-memory `ACCESS_TOKEN` instead of only refreshing the token file.
 - Google mode skips the Fitbit-only battery update at startup and in schedules.
 - Google mode uses a 15-minute intraday schedule instead of the legacy 3-minute Fitbit schedule to reduce noisy API churn.
+- `Yinzo Health Klar` uses explicit Grafana aliases/legend labels so panels show human names such as `Tief`, `Leicht`, `REM`, `Wach`, not raw Influx names such as `Sleep Summary.mean`.
+
+## Historical backfill
+
+Use the README's bulk-update mode for previous weeks/months: run the collector once with `MANUAL_START_DATE` and `MANUAL_END_DATE`, then return to normal collector mode. Back up InfluxDB first.
+
+Google Health `dailyRollUp` has stricter range/page limits than the legacy Fitbit path. If a local patch uses broad rollup ranges, split into <=14-day chunks or request rollups day-by-day/page-sized. The PR #67-based collector path in this branch already performs rollup collection per day for the affected aggregate endpoints.
 
 ## Battery
 
